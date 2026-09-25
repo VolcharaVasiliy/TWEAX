@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TWEAX</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <p id="error" class="error" hidden></p>
+
+    <section class="panel">
+      <div class="panel-title">
+        <span class="brand">TWEA<svg class="x-logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></span>
+        <button id="lang-toggle" class="lang" type="button">EN</button>
+      </div>
+      <label class="switch-row" for="tweak-unmute">
+        <span class="switch-label"><span data-i18n="unmuteTitle">Sound without clicking</span><em data-i18n="unmuteDesc">unmute videos automatically</em></span>
+        <input type="checkbox" id="tweak-unmute" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+      <label class="switch-row" for="tweak-lock">
+        <span class="switch-label"><span data-i18n="lockTitle">Lock volume</span><em data-i18n="lockDesc">pin the volume to the level below</em></span>
+        <input type="checkbox" id="tweak-lock" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+      <label class="switch-row" for="tweak-video">
+        <span class="switch-label"><span data-i18n="videoDlTitle">Video downloads</span><em data-i18n="videoDlDesc">show the button on video posts</em></span>
+        <input type="checkbox" id="tweak-video" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+      <label class="switch-row" for="tweak-gif">
+        <span class="switch-label"><span data-i18n="gifDlTitle">GIF downloads</span><em data-i18n="gifDlDesc">save as a real .gif, not mp4</em></span>
+        <input type="checkbox" id="tweak-gif" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+      <label class="switch-row" for="tweak-photo">
+        <span class="switch-label"><span data-i18n="photoDlTitle">Photo downloads</span><em data-i18n="photoDlDesc">original size, all images of a post</em></span>
+        <input type="checkbox" id="tweak-photo" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+      <div class="volume-row" id="volume-row">
+        <label class="inline muted small" for="volume-level" data-i18n="volume">Volume</label>
+        <input type="range" id="volume-level" min="0" max="100" step="1" />
+        <span id="volume-readout" class="mono readout">100%</span>
+      </div>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
