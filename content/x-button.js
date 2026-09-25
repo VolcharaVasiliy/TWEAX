@@ -26,7 +26,7 @@
 
   const SETTINGS_KEY = "tweax.settings";
   /** Download toggles from the popup; absent keys stay enabled. */
-  let prefs = { video: true, gif: true, photo: true, pattern: "" };
+  let prefs = { video: true, gif: true, photo: true, reveal: true, pattern: "" };
   /** statusIds whose API-declared media type is disabled right now. */
   const typeHidden = new Set();
   /** statusIds the API map confirms have media (inject may run pre-DOM). */
@@ -61,6 +61,7 @@
       video: t.videoDownloads !== false,
       gif: t.gifDownloads !== false,
       photo: t.photoDownloads !== false,
+      reveal: t.revealSensitive !== false,
       pattern: typeof t.filenamePattern === "string" ? t.filenamePattern.trim() : "",
     };
   }
@@ -1294,10 +1295,27 @@
     overlayRegistry.set(box, b);
   }
 
+  // Auto-reveal NSFW: X gates sensitive media behind a blurred role=button
+  // overlay ("Sensitive content" / "Content warning"). One synthetic click
+  // reveals it. Clicked gates are tracked in a WeakSet — a real reveal
+  // unmounts the gate, so nothing is re-clicked; a re-render that builds a
+  // fresh gate retries, which is the desired behavior anyway.
+  const revealedGates = new WeakSet();
+
+  function revealSensitive(article) {
+    if (!prefs.reveal) return;
+    for (const gate of article.querySelectorAll('[role="button"][style*="blur"]')) {
+      if (revealedGates.has(gate)) continue;
+      revealedGates.add(gate);
+      gate.click();
+    }
+  }
+
   function scan() {
     for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
       inject(article);
       addMediaOverlays(article);
+      revealSensitive(article);
       // The API map knows the real media type (video/gif/photo) — sync the
       // button's icon with it and hide the whole thing when that type is off.
       void variantsFor(statusIdOf(article)).then((res) => {

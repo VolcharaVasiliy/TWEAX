@@ -8,6 +8,7 @@ const DEFAULT_TWEAKS = {
   unmuteVideos: true,
   volumeLock: true,
   volumeLevel: 1,
+  revealSensitive: true,
   videoDownloads: true,
   gifDownloads: true,
   photoDownloads: true,
@@ -33,6 +34,8 @@ const I18N = {
     unmuteDesc: "unmute videos automatically",
     lockTitle: "Lock volume",
     lockDesc: "pin the volume to the level below",
+    revealTitle: "Auto-reveal NSFW",
+    revealDesc: "show sensitive media without a click",
     videoDlTitle: "Video downloads",
     videoDlDesc: "show the button on video posts",
     gifDlTitle: "GIF downloads",
@@ -48,6 +51,8 @@ const I18N = {
     unmuteDesc: "автоматически включать звук",
     lockTitle: "Фиксировать громкость",
     lockDesc: "закрепить громкость на уровне ниже",
+    revealTitle: "Показывать NSFW",
+    revealDesc: "открывать чувствительное медиа без клика",
     videoDlTitle: "Скачивание видео",
     videoDlDesc: "кнопка на постах с видео",
     gifDlTitle: "Скачивание гифок",
@@ -63,6 +68,8 @@ const I18N = {
     unmuteDesc: "自动取消视频静音",
     lockTitle: "锁定音量",
     lockDesc: "将音量固定在下方数值",
+    revealTitle: "自动显示敏感内容",
+    revealDesc: "无需点击自动展开 NSFW",
     videoDlTitle: "下载视频",
     videoDlDesc: "在视频帖子显示按钮",
     gifDlTitle: "下载 GIF",
@@ -78,6 +85,8 @@ const I18N = {
     unmuteDesc: "動画のミュートを自動解除",
     lockTitle: "音量を固定",
     lockDesc: "音量を下のレベルに固定",
+    revealTitle: "NSFWを自動表示",
+    revealDesc: "センシティブなメディアを自動で開く",
     videoDlTitle: "動画ダウンロード",
     videoDlDesc: "動画投稿にボタンを表示",
     gifDlTitle: "GIFダウンロード",
@@ -93,6 +102,8 @@ const I18N = {
     unmuteDesc: "activar el sonido automáticamente",
     lockTitle: "Fijar volumen",
     lockDesc: "fijar el volumen al nivel de abajo",
+    revealTitle: "Mostrar NSFW",
+    revealDesc: "mostrar contenido sensible sin clics",
     videoDlTitle: "Descargas de vídeo",
     videoDlDesc: "mostrar el botón en posts con vídeo",
     gifDlTitle: "Descargas de GIF",
@@ -166,6 +177,7 @@ function renderTweaks(tweaks) {
   const cfg = { ...DEFAULT_TWEAKS, ...(tweaks ?? {}) };
   $("tweak-unmute").checked = cfg.unmuteVideos === true;
   $("tweak-lock").checked = cfg.volumeLock === true;
+  $("tweak-reveal").checked = cfg.revealSensitive === true;
   $("tweak-video").checked = cfg.videoDownloads === true;
   $("tweak-gif").checked = cfg.gifDownloads === true;
   $("tweak-photo").checked = cfg.photoDownloads === true;
@@ -215,6 +227,7 @@ $("lang-toggle").addEventListener("click", () => {
 
 $("tweak-unmute").addEventListener("change", (e) => void saveTweaks({ unmuteVideos: e.target.checked }));
 $("tweak-lock").addEventListener("change", (e) => void saveTweaks({ volumeLock: e.target.checked }));
+$("tweak-reveal").addEventListener("change", (e) => void saveTweaks({ revealSensitive: e.target.checked }));
 $("tweak-video").addEventListener("change", (e) => void saveTweaks({ videoDownloads: e.target.checked }));
 $("tweak-gif").addEventListener("change", (e) => void saveTweaks({ gifDownloads: e.target.checked }));
 $("tweak-photo").addEventListener("change", (e) => void saveTweaks({ photoDownloads: e.target.checked }));

@@ -55,6 +55,9 @@ X autoplays videos muted and there's no setting to change that. TWEAX unmutes vi
 ### 🔒 Lock volume
 Pins the playback volume to a level you choose in the popup. You can still drag the player's own slider for the current video — the next one simply starts at your pinned level again.
 
+### 👁️ Auto-reveal NSFW
+X hides sensitive media behind a blurred "Show" overlay. TWEAX reveals it automatically, so the feed scrolls without interruptions — and revealed videos immediately benefit from the sound tweaks.
+
 ---
 
 ## Installation
@@ -83,6 +86,7 @@ Open the TWEAX popup to toggle what it does:
 | --- | --- |
 | **Sound without clicking** | Auto-unmute videos on X |
 | **Lock volume** | Pin volume to the slider level below |
+| **Auto-reveal NSFW** | Show sensitive media without the click |
 | **Video downloads** | Show the Download button on video posts |
 | **GIF downloads** | Save GIFs as real `.gif` files |
 | **Photo downloads** | Enable photo downloading |

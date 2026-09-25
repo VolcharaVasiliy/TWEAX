@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TWEAX",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Download videos right in the browser (X HLS video+audio muxed via ffmpeg.wasm) and keep the sound on: auto-unmute + locked volume.",
   "minimum_chrome_version": "116",
   "permissions": [
