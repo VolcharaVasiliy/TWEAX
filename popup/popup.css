@@ -134,6 +134,26 @@ body {
 .volume-row label.inline { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .readout { width: 38px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* Filename: the pattern's parts as tags — black = included in the pattern,
+ * gray = skipped. No cursor or hover effects: color is the only signal,
+ * like the rest of the popup. */
+.name-block {
+  padding-top: 8px;
+  margin-top: 2px;
+  border-top: 1px solid var(--wash);
+}
+.name-block label.inline { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.name-example {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 6px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.name-example .chip { color: var(--faint); }
+.name-example .chip.on { color: var(--ink); }
+
 input[type="range"] {
   flex: 1 1 auto;
   appearance: none;

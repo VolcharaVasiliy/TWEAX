@@ -461,7 +461,7 @@ async function runJob(job) {
             });
           }
         }
-        files.push({ name: `${i + 1}.${ext}`, data });
+        files.push({ name: `${job.zipNames?.[i] ? sanitize(job.zipNames[i]) : i + 1}.${ext}`, data });
         progress({ phase: "zip", pct: Math.round(((i + 1) / job.zipUrls.length) * 95) });
       }
       const blob = new Blob([buildZip(files)], { type: "application/zip" });

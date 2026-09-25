@@ -25,8 +25,8 @@ Works in Chrome and Edge (Manifest V3, Chromium 116+).
       <br><sub><b>Copy media link</b> — its own item in X's native Share menu</sub>
     </td>
     <td width="50%" align="center">
-      <img src="assets/popup.jpg" alt="The TWEAX popup" width="66%" />
-      <br><sub><b>The popup</b> — one toggle per feature, four languages</sub>
+      <img src="assets/popup.png" alt="The TWEAX popup" width="66%" />
+      <br><sub><b>The popup</b> — one toggle per feature, five languages</sub>
     </td>
   </tr>
 </table>
@@ -86,8 +86,24 @@ Open the TWEAX popup to toggle what it does:
 | **Video downloads** | Show the Download button on video posts |
 | **GIF downloads** | Save GIFs as real `.gif` files |
 | **Photo downloads** | Enable photo downloading |
+| **Filename pattern** | Template for downloaded file names |
 
-The popup and the button labels speak English, Russian, Chinese, and Japanese — click the language code (EN/RU/ZH/JA) in the popup's corner to switch.
+The popup and the button labels speak English, Russian, Chinese, Japanese, and Spanish — click the language code (EN/RU/ZH/JA/ES) in the popup's corner to switch.
+
+### Filename template
+
+The popup lists the available parts as tags — click a tag to include it (black) or skip it (gray). Enabled parts join with `_`, and the default set is `{account}_{tweetId}_{serial}` → `nasa_1234567890_1.jpg`. Available parts:
+
+| Part | Becomes |
+| --- | --- |
+| `{account}` | The author's handle, without the `@` |
+| `{tweetId}` | The tweet's id |
+| `{mediaId}` | The media file's id on X's CDN |
+| `{serial}` | 1-based position of the media within the post |
+| `{date}` | The tweet's date — `YYYYMMDD` |
+| `{datetime}` | The tweet's date and time — `YYYYMMDD_HHMMSS` |
+
+Characters a filesystem won't accept are replaced with `_`.
 
 ---
 

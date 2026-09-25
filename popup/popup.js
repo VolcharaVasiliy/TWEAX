@@ -11,9 +11,22 @@ const DEFAULT_TWEAKS = {
   videoDownloads: true,
   gifDownloads: true,
   photoDownloads: true,
+  filenamePattern: "{account}_{tweetId}_{serial}",
 };
 
-const LANG_ORDER = ["en", "ru", "zh", "ja"];
+// The filename parts, in the canonical order they appear in the pattern.
+// Clicking a tag toggles it in the pattern.
+const NAME_TOKENS = [
+  { token: "{account}" },
+  { token: "{tweetId}" },
+  { token: "{mediaId}" },
+  { token: "{serial}" },
+  { token: "{date}" },
+  { token: "{datetime}" },
+];
+const PATTERN_DEFAULT = "{account}_{tweetId}_{serial}";
+
+const LANG_ORDER = ["en", "ru", "zh", "ja", "es"];
 const I18N = {
   en: {
     unmuteTitle: "Sound without clicking",
@@ -27,6 +40,7 @@ const I18N = {
     photoDlTitle: "Photo downloads",
     photoDlDesc: "original size, all images of a post",
     volume: "Volume",
+    filename: "Filename",
     errorSave: "could not save the tweak",
   },
   ru: {
@@ -41,6 +55,7 @@ const I18N = {
     photoDlTitle: "Скачивание фото",
     photoDlDesc: "оригинальный размер, все фото поста",
     volume: "Громкость",
+    filename: "Имя файла",
     errorSave: "не удалось сохранить твинк",
   },
   zh: {
@@ -55,6 +70,7 @@ const I18N = {
     photoDlTitle: "下载图片",
     photoDlDesc: "原始尺寸，含全部图片",
     volume: "音量",
+    filename: "文件名",
     errorSave: "无法保存设置",
   },
   ja: {
@@ -69,11 +85,59 @@ const I18N = {
     photoDlTitle: "画像ダウンロード",
     photoDlDesc: "オリジナルサイズ、全画像対応",
     volume: "音量",
+    filename: "ファイル名",
     errorSave: "設定を保存できませんでした",
+  },
+  es: {
+    unmuteTitle: "Sonido sin clics",
+    unmuteDesc: "activar el sonido automáticamente",
+    lockTitle: "Fijar volumen",
+    lockDesc: "fijar el volumen al nivel de abajo",
+    videoDlTitle: "Descargas de vídeo",
+    videoDlDesc: "mostrar el botón en posts con vídeo",
+    gifDlTitle: "Descargas de GIF",
+    gifDlDesc: "guardar como .gif real, no mp4",
+    photoDlTitle: "Descargas de fotos",
+    photoDlDesc: "tamaño original, todas las imágenes del post",
+    volume: "Volumen",
+    filename: "Nombre",
+    errorSave: "no se pudo guardar el ajuste",
   },
 };
 
 let lang = "en";
+let enabledTokens = [];
+
+/** The parts a stored pattern includes. Absent/empty patterns mean "never
+ * touched" and show the default set; "none" is the stored all-off value. */
+function tokensOf(pattern) {
+  if (typeof pattern !== "string" || !pattern.trim()) return [...DEFAULT_ENABLED];
+  return NAME_TOKENS.map((t) => t.token).filter((tok) => pattern.includes(tok));
+}
+const DEFAULT_ENABLED = tokensOf(PATTERN_DEFAULT);
+
+function renderNameExample() {
+  const el = $("name-example");
+  el.textContent = "";
+  for (const t of NAME_TOKENS) {
+    const chip = document.createElement("span");
+    chip.className = enabledTokens.includes(t.token) ? "chip on" : "chip";
+    chip.textContent = t.token;
+    chip.addEventListener("click", () => void toggleNameToken(t.token));
+    el.append(chip);
+  }
+}
+
+async function toggleNameToken(token) {
+  const set = new Set(enabledTokens);
+  if (set.has(token)) set.delete(token);
+  else set.add(token);
+  // Canonical order regardless of the click order; an empty pattern is
+  // stored as "none" so it stays distinguishable from "never touched".
+  enabledTokens = NAME_TOKENS.map((t) => t.token).filter((t) => set.has(t));
+  renderNameExample();
+  await saveTweaks({ filenamePattern: enabledTokens.join("_") || "none" });
+}
 
 function t(key) {
   return (I18N[lang] ?? I18N.en)[key] ?? I18N.en[key] ?? key;
@@ -109,6 +173,8 @@ function renderTweaks(tweaks) {
   $("volume-level").value = String(level);
   $("volume-readout").textContent = `${level}%`;
   $("volume-row").classList.toggle("disabled", cfg.volumeLock !== true);
+  enabledTokens = tokensOf(cfg.filenamePattern);
+  renderNameExample();
 }
 
 async function loadSettings() {

@@ -26,7 +26,7 @@
 
   const SETTINGS_KEY = "tweax.settings";
   /** Download toggles from the popup; absent keys stay enabled. */
-  let prefs = { video: true, gif: true, photo: true };
+  let prefs = { video: true, gif: true, photo: true, pattern: "" };
   /** statusIds whose API-declared media type is disabled right now. */
   const typeHidden = new Set();
   /** statusIds the API map confirms have media (inject may run pre-DOM). */
@@ -61,6 +61,7 @@
       video: t.videoDownloads !== false,
       gif: t.gifDownloads !== false,
       photo: t.photoDownloads !== false,
+      pattern: typeof t.filenamePattern === "string" ? t.filenamePattern.trim() : "",
     };
   }
 
@@ -310,6 +311,73 @@
     return [...new Set(out)];
   }
 
+  // ------------------------------------------------------- filename template
+
+  const DEFAULT_PATTERN = "{account}_{tweetId}_{serial}";
+
+  /** Everything the pattern tokens need: the author handle and the tweet's
+   * timestamp come from the article's own DOM, the media id from the file's
+   * CDN url. */
+  function nameCtxFor(article, statusId, serial, url) {
+    return {
+      account: authorOf(article),
+      tweetId: statusId,
+      serial,
+      date: tweetDateOf(article),
+      mediaId: mediaIdOf(url),
+    };
+  }
+
+  /** Build a download file name from the user's pattern: known tokens are
+   * substituted, everything else stays literally, and filename-illegal
+   * characters are replaced so even a hostile pattern yields a valid name. */
+  function renderPattern(pattern, ctx) {
+    const d = ctx.date ?? new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const date = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    const map = {
+      "{account}": ctx.account || "x",
+      "{tweetId}": ctx.tweetId ?? "",
+      "{mediaId}": ctx.mediaId ?? "",
+      "{serial}": String(ctx.serial ?? 1),
+      "{date}": date,
+      "{datetime}": `${date}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`,
+    };
+    let out = pattern?.trim() || DEFAULT_PATTERN;
+    for (const [token, value] of Object.entries(map)) out = out.split(token).join(value);
+    out = out.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 120);
+    return out || "x";
+  }
+
+  /** The author handle: the tweet's own permalink path (the timestamp link is
+   * authoritative, same source statusIdOf trusts). */
+  function authorOf(scope) {
+    const href =
+      scope?.querySelector('a[href*="/status/"] time')?.closest("a")?.getAttribute("href") ??
+      scope?.querySelector('a[href*="/status/"]')?.getAttribute("href") ??
+      "";
+    const seg = /^\/([^/]+)/.exec(href)?.[1];
+    return seg && seg !== "i" ? seg : "x";
+  }
+
+  /** The tweet's own timestamp; a missing/invalid one falls back to "now" —
+   * the template still renders, just with the download moment. */
+  function tweetDateOf(scope) {
+    const iso = scope?.querySelector('a[href*="/status/"] time')?.getAttribute("datetime");
+    const d = iso ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? d : new Date();
+  }
+
+  /** The media file's id on X's CDN (video variants carry a numeric id, photo
+   * urls a /media/<id> segment). */
+  function mediaIdOf(url) {
+    return (
+      /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(url ?? "")?.[1] ??
+      /\/media\/([A-Za-z0-9_-]+)/.exec(url ?? "")?.[1] ??
+      ""
+    );
+  }
+
   // ---------------------------------------------------------------- click
 
   /** Shared per-article download flow: the action-bar button and the media
@@ -351,7 +419,11 @@
         return;
       }
       if (photoUrls.length > 1) {
-        const job = { zipUrls: photoUrls, name: statusId ? `x-${statusId}` : null };
+        const job = {
+          zipUrls: photoUrls,
+          zipNames: photoUrls.map((u, i) => renderPattern(prefs.pattern, nameCtxFor(article, statusId, i + 1, u))),
+          name: renderPattern(prefs.pattern, nameCtxFor(article, statusId, 1, null)),
+        };
         const res = await api.runtime
           .sendMessage({ kind: "tweax:download", job })
           .catch((err) => ({ ok: false, error: String(err) }));
@@ -361,7 +433,12 @@
         return;
       }
       const res = await api.runtime
-        .sendMessage({ kind: "tweax:download-photos", urls: photoUrls, statusId })
+        .sendMessage({
+          kind: "tweax:download-photos",
+          urls: photoUrls,
+          statusId,
+          names: photoUrls.map((u, i) => renderPattern(prefs.pattern, nameCtxFor(article, statusId, i + 1, u))),
+        })
         .catch((err) => ({ ok: false, error: String(err) }));
       if (res?.ok) {
         if (btn) {
@@ -399,7 +476,8 @@
         const job = {
           zipUrls: specs.map((s) => s.url),
           zipGifs: videoItems.map((it) => it.type === "animated_gif" && prefs.gif),
-          name: statusId ? `x-${statusId}` : null,
+          zipNames: specs.map((s, i) => renderPattern(prefs.pattern, nameCtxFor(article, statusId, i + 1, s.url))),
+          name: renderPattern(prefs.pattern, nameCtxFor(article, statusId, 1, null)),
         };
         const res = await api.runtime
           .sendMessage({ kind: "tweax:download", job })
@@ -436,7 +514,7 @@
       }
     if (spec) {
       spec.gif = media?.type === "animated_gif";
-      if (statusId) spec.name = `x-${statusId}`;
+      if (statusId) spec.name = renderPattern(prefs.pattern, nameCtxFor(article, statusId, 1, spec.url));
     }
     if (spec?.gif && !prefs.gif) {
       flash(btn, "GIF downloads are off");
@@ -479,7 +557,9 @@
       });
   }
 
-  // Photo overlays on multi-photo posts: each downloads its own image.
+  /** Media overlays on multi-media posts: each downloads its own item — a
+   * photo directly, a GIF/video as that position's media entity (the box
+   * holds a <video>, so the two are told apart locally). */
   document.addEventListener(
     "click",
     async (event) => {
@@ -490,16 +570,50 @@
       if (overlay.dataset.tweaxBusy === "1") return;
       overlay.dataset.tweaxBusy = "1";
       try {
-        if (!prefs.photo) return;
         const article = overlay.closest("article");
         const statusId = overlay.dataset.tweaxSid || statusIdOf(article);
-        const media = (await variantsFor(statusId))?.media ?? null;
-        const urls = media?.photos?.length ? media.photos.map(origPhotoUrl) : domPhotos(article);
         const idx = Number(overlay.dataset.tweaxIndex ?? 0);
+        const media = (await variantsFor(statusId))?.media ?? null;
+
+        // GIF/video item: download the entity at this position, converted to
+        // a real .gif when it is one and the GIF toggle is on.
+        if (overlay.parentElement?.querySelector("video")) {
+          const items = media?.videos?.length
+            ? media.videos
+            : media && (media.type === "video" || media.type === "animated_gif")
+              ? [media]
+              : [];
+          const item = items[idx] ?? null;
+          const spec = item ? bestVariantSpec(item) : null;
+          if (!spec?.url || /\.m3u8(\?|$)/i.test(spec.url)) return;
+          const gif = item.type === "animated_gif";
+          if (gif && !prefs.gif) return;
+          if (!gif && !prefs.video) return;
+          await api.runtime
+            .sendMessage({
+              kind: "tweax:download",
+              job: {
+                url: spec.url,
+                gif: gif && prefs.gif,
+                name: renderPattern(prefs.pattern, nameCtxFor(article, statusId, idx + 1, spec.url)),
+              },
+            })
+            .catch(() => {});
+          return;
+        }
+
+        if (!prefs.photo) return;
+        const urls = media?.photos?.length ? media.photos.map(origPhotoUrl) : domPhotos(article);
         const url = urls[idx] ?? urls[0];
         if (!url) return;
         await api.runtime
-          .sendMessage({ kind: "tweax:download-photos", urls: [url], statusId, start: idx })
+          .sendMessage({
+            kind: "tweax:download-photos",
+            urls: [url],
+            statusId,
+            start: idx,
+            names: [renderPattern(prefs.pattern, nameCtxFor(article, statusId, idx + 1, url))],
+          })
           .catch(() => {});
       } catch {
         // An overlay failure must never surface as a console error.
@@ -1146,23 +1260,25 @@
     }, 75_000);
   }
 
-  /** Photo overlays: multi-photo posts only — one overlay per photo (indexed
-   * via /photo/N), the main button downloads them all as a ZIP. Single
-   * photos and videos never get container overlays. */
-  function addPhotoOverlays(article) {
-    if (!prefs.photo) return;
-    if (article.querySelector('[data-testid="videoPlayer"]')) return;
-    const boxes = [...article.querySelectorAll('[data-testid="tweetPhoto"]')];
+  /** Per-media overlays on multi-media posts: one overlay per item — the
+   * main button downloads them all as a ZIP, the overlays grab singles. X
+   * renders GIFs as photo boxes (a <video> looping inside) and videos as
+   * videoPlayer containers, so both are covered; a single item stays with
+   * the main button. */
+  function addMediaOverlays(article) {
+    if (!prefs.photo && !prefs.gif && !prefs.video) return;
+    const boxes = [...article.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')];
     if (boxes.length < 2) return;
     const ownSid = statusIdsIn(article)[0] ?? statusIdOf(article);
     for (const [i, box] of boxes.entries()) {
       if (box.querySelector(":scope > [data-tweax-overlay]")) continue;
       const wrap = wrapSidOf(box, article);
-      createPhotoOverlay(box, ownSid, wrap?.photoIdx ?? i, boxes.length, null);
+      const kind = box.querySelector("video") ? "media" : "photo";
+      createMediaOverlay(box, wrap?.sid ?? ownSid, wrap?.photoIdx ?? i, boxes.length, kind);
     }
   }
 
-  function createPhotoOverlay(box, sid, index, total, mediaId) {
+  function createMediaOverlay(box, sid, index, total, kind) {
     if (box.querySelector(":scope > [data-tweax-overlay]")) return;
     if (getComputedStyle(box).position === "static") box.style.position = "relative";
     const b = document.createElement("div");
@@ -1170,9 +1286,9 @@
     b.tabIndex = 0;
     b.dataset.tweaxOverlay = "photo";
     b.dataset.tweaxSid = sid ?? "";
-    if (mediaId) b.dataset.tweaxMediaId = mediaId;
     if (index != null) b.dataset.tweaxIndex = String(index);
-    b.setAttribute("aria-label", total > 1 ? `Download image ${index + 1}` : "Download image");
+    const noun = kind === "media" ? "video" : "image";
+    b.setAttribute("aria-label", total > 1 ? `Download ${noun} ${index + 1}` : `Download ${noun}`);
     b.innerHTML = OVERLAY_SVG;
     box.appendChild(b);
     overlayRegistry.set(box, b);
@@ -1181,7 +1297,7 @@
   function scan() {
     for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
       inject(article);
-      addPhotoOverlays(article);
+      addMediaOverlays(article);
       // The API map knows the real media type (video/gif/photo) — sync the
       // button's icon with it and hide the whole thing when that type is off.
       void variantsFor(statusIdOf(article)).then((res) => {

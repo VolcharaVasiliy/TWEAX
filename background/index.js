@@ -133,6 +133,7 @@ async function startJobNow(spec, tabId) {
     gif: spec.gif === true,
     zipUrls: Array.isArray(spec.zipUrls) ? spec.zipUrls : null,
     zipGifs: Array.isArray(spec.zipGifs) ? spec.zipGifs : null,
+    zipNames: Array.isArray(spec.zipNames) ? spec.zipNames : null,
   };
   recentJobs.set(key, { jobId: job.jobId, at: Date.now() });
   jobs.set(job.jobId, { at: Date.now() });
@@ -217,20 +218,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     // From the in-feed button: save each photo of the tweet at original size,
-    // one file per image (x-<statusId>-1.jpg, …). Direct browser downloads —
-    // no offscreen pipeline needed for plain images.
+    // one file per image, named by the content script's filename template
+    // (or x-<statusId>-N when no template names arrive).
     case "tweax:download-photos": {
       void (async () => {
         try {
           const urls = (Array.isArray(msg.urls) ? msg.urls : []).slice(0, 4);
           if (!urls.length) throw new Error("no image urls");
+          const names = Array.isArray(msg.names) ? msg.names : [];
           const base = msg.statusId ? `x-${msg.statusId}` : `x-${Date.now().toString(36)}`;
           const start = Number(msg.start ?? 0) || 0;
           let count = 0;
           for (const [i, url] of urls.entries()) {
             await chrome.downloads.download({
               url,
-              filename: `${base}-${start + i + 1}.${photoExt(url)}`,
+              filename: `${String(names[i] ?? `${base}-${start + i + 1}`)}.${photoExt(url)}`,
             });
             count++;
           }
