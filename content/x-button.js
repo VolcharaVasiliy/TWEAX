@@ -1261,21 +1261,30 @@
     }, 75_000);
   }
 
-  /** Per-media overlays on multi-media posts: one overlay per item — the
-   * main button downloads them all as a ZIP, the overlays grab singles. X
-   * renders GIFs as photo boxes (a <video> looping inside) and videos as
-   * videoPlayer containers, so both are covered; a single item stays with
-   * the main button. */
-  function addMediaOverlays(article) {
-    if (!prefs.photo && !prefs.gif && !prefs.video) return;
-    const boxes = [...article.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')];
-    if (boxes.length < 2) return;
-    const ownSid = statusIdsIn(article)[0] ?? statusIdOf(article);
-    for (const [i, box] of boxes.entries()) {
-      if (box.querySelector(":scope > [data-tweax-overlay]")) continue;
+  /** Per-media overlays on multi-media posts only — the main button
+   * downloads everything as one ZIP, the overlays grab single items. X
+   * nests the video player inside a photo box, so a single-media post can
+   * present two containers: they collapse to their outermost element, and
+   * the API map's own item count (photos + video entities) decides anyway,
+   * with the collapsed DOM count as fallback. Quoted media boxes answer to
+   * their own status and are never pruned here. */
+  function syncMediaOverlays(article, media, sid) {
+    const all = [...article.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')];
+    const boxes = all.filter((box) => !all.some((other) => other !== box && other.contains(box)));
+    const known = media?.photos?.length || media?.videos?.length;
+    const count = known ? (media.photos?.length ?? 0) + (media.videos?.length ?? 0) : boxes.length;
+    for (const box of boxes) {
+      const overlay = box.querySelector(":scope > [data-tweax-overlay]");
       const wrap = wrapSidOf(box, article);
+      const own = !wrap?.sid || wrap.sid === sid;
       const kind = box.querySelector("video") ? "media" : "photo";
-      createMediaOverlay(box, wrap?.sid ?? ownSid, wrap?.photoIdx ?? i, boxes.length, kind);
+      const wanted = kind === "photo" ? prefs.photo : prefs.gif || prefs.video;
+      if (!wanted || (count < 2 && own)) {
+        if (overlay) removeOverlayEl(overlay);
+        continue;
+      }
+      if (overlay) continue;
+      createMediaOverlay(box, wrap?.sid ?? sid, wrap?.photoIdx ?? boxes.indexOf(box), boxes.length, kind);
     }
   }
 
@@ -1314,14 +1323,14 @@
   function scan() {
     for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
       inject(article);
-      addMediaOverlays(article);
       revealSensitive(article);
       // The API map knows the real media type (video/gif/photo) — sync the
       // button's icon with it and hide the whole thing when that type is off.
       void variantsFor(statusIdOf(article)).then((res) => {
-        const media = res?.media;
-        if (!media) return;
+        const media = res?.media ?? null;
         const sid = statusIdOf(article);
+        syncMediaOverlays(article, media, sid);
+        if (!media) return;
         const mtype = media.type ?? (media.photos?.length ? "photo" : null);
         if (!mtype) return;
         knownMedia.add(sid);
