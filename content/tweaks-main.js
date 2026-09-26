@@ -293,6 +293,8 @@
     if (!statusId) return;
     const cur = mediaByStatus.get(statusId) ?? { sid: statusId, type: null, variants: [], photos: [], videos: [] };
     cur.sid = statusId;
+    if (piece.author) cur.author = piece.author;
+    if (piece.created && !cur.created) cur.created = piece.created;
     if (piece.type) cur.type = piece.type;
     if (piece.variants) {
       cur.variants = piece.variants;
@@ -320,17 +322,42 @@
     let tid = tweetId;
     if (typeof node.rest_id === "string") tid = node.rest_id;
     else if (typeof node.id_str === "string" && node.__typename === "Tweet") tid = node.id_str;
+    // The tweet's own author and date, captured level-locally (the quoted
+    // tweet's user lives deeper in the payload and must not bleed up): the
+    // download names are built from these when a quoted card renders no
+    // permalink anchor of its own.
+    if (tid !== tweetId && (node.__typename === "Tweet" || node.core || node.legacy?.full_text)) {
+      // The user object's shape moved over the years: legacy carries
+      // screen_name under user.legacy, the newer one under
+      // user_results.result.core.screen_name.
+      const user = node.core?.user?.legacy ?? node.core?.user_results?.result ?? node.user?.legacy ?? node.user_results?.result;
+      const author =
+        user?.core?.screen_name ??
+        user?.legacy?.screen_name ??
+        user?.screen_name ??
+        null;
+      const created =
+        (typeof node.legacy?.created_at === "string" && node.legacy.created_at) ||
+        (typeof node.created_at === "string" && node.created_at) ||
+        null;
+      if (author || created) rememberMedia(tid, { author, created });
+    }
     if (node.video_info?.variants) {
       // A media entity: node.type is "video" or "animated_gif" here.
       const variants = node.video_info.variants
         .filter((v) => typeof v?.url === "string")
         .map((v) => ({ bitrate: Number(v.bitrate ?? 0), url: v.url, content_type: v.content_type ?? "" }));
       // The twimg media ids carried by the variants let overlays bind to a
-      // tweet without any status link in the DOM.
+      // tweet without any status link in the DOM. Ids are numeric or
+      // alphanumeric, either as a directory (ext_tw_video/123/…) or as the
+      // file name itself (tweet_video/HTInYNaXEAAtwzB.mp4 — GIFs).
       const mediaIds = [
         ...new Set(
           variants
-            .map((v) => /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(v.url)?.[1])
+            .map((v) =>
+              /\/(?:amplify_video|ext_tw_video|tweet_video)\/([A-Za-z0-9_-]+)/.exec(v.url)?.[1] ??
+              /\/vid\/(\d+)\//.exec(v.url)?.[1]
+            )
             .filter(Boolean)
         ),
       ];
@@ -341,6 +368,19 @@
       });
     } else if (node.type === "photo" && typeof node.media_url_https === "string") {
       rememberMedia(tid, { type: "photo", photos: [node.media_url_https] });
+    } else if (
+      (node.type === "video" || node.type === "animated_gif") &&
+      typeof node.media_url_https === "string"
+    ) {
+      // A trimmed entity (timelines often strip quoted tweets' video_info):
+      // the thumbnail still names the media's CDN id, so the tweet stays
+      // resolvable and attributable even without variant urls.
+      const thumbId =
+        /\/(?:ext_tw_video|amplify_video|tweet_video)_thumb\/([A-Za-z0-9_-]+)/.exec(node.media_url_https)?.[1] ?? null;
+      rememberMedia(tid, {
+        type: node.type === "animated_gif" ? "animated_gif" : "video",
+        mediaIds: thumbId ? [thumbId] : [],
+      });
     }
     for (const v of Object.values(node)) harvestMedia(v, tid);
   }
@@ -419,7 +459,15 @@
       }
     }
     window.postMessage(
-      { __tweax: true, kind: "variants-reply", nonce: d.nonce, media: hit, sid: hit?.sid ?? null },
+      {
+        __tweax: true,
+        kind: "variants-reply",
+        nonce: d.nonce,
+        media: hit,
+        sid: hit?.sid ?? null,
+        author: hit?.author ?? null,
+        created: hit?.created ?? null,
+      },
       "*"
     );
   });

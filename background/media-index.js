@@ -108,9 +108,12 @@ export function installMediaIndex() {
   chrome.tabs.onRemoved.addListener((tabId) => tabs.delete(tabId));
 }
 
-/** The tweet's video id from a video.twimg.com playlist URL. */
+/** The tweet's video id from a video.twimg.com URL — numeric or alphanumeric
+ * (GIFs), as a directory or as the bare file name. */
 function twimgVideoId(url) {
-  const match = /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(url);
+  const match =
+    /\/(?:amplify_video|ext_tw_video|tweet_video)\/([A-Za-z0-9_-]+)/.exec(url) ??
+    /\/vid\/(\d+)\//.exec(url);
   return match ? match[1] : null;
 }
 

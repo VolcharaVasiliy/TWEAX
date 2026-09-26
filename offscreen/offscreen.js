@@ -571,7 +571,9 @@ function sanitize(name) {
 function defaultName(url) {
   try {
     const u = new URL(url);
-    const id = /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(url)?.[1];
+    const id =
+      /\/(?:amplify_video|ext_tw_video|tweet_video)\/([A-Za-z0-9_-]+)/.exec(url)?.[1] ??
+      /\/vid\/(\d+)\//.exec(url)?.[1];
     if (id) return `x-${id}`;
     const last = u.pathname.split("/").filter(Boolean).pop() ?? "video";
     const stripped = last.replace(/\.m3u8$/i, "").replace(/\.[a-z0-9]{1,5}$/i, "");

@@ -101,14 +101,19 @@
   const ICON_IMAGE =
     '<path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>';
 
-  const VIDEO_ID_RE = /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//;
+  const VIDEO_ID_RE = /\/(?:amplify_video|ext_tw_video|tweet_video)\/([A-Za-z0-9_-]+)/;
+  // A media id carried as a bare directory under /vid/ (legacy per-user paths).
+  // Rendition paths like /vid/avc1/... never match: a codec is not all digits.
+  const VID_PATH_ID_RE = /\/vid\/(\d+)\//;
+  /** Same id space for the media thumbnails (the poster names the file). */
+  const THUMB_ID_RE = /\/(?:ext_tw_video|amplify_video|tweet_video)_thumb\/([A-Za-z0-9_-]+)/;
   const PLAYLIST_RE = /\.m3u8(\?|#|$)/i;
   // Rendition paths: video codecs carry a resolution (748x560), audio a
   // bitrate (128000). Generic over codecs (avc1/av01/hevc/mp4a/…).
   const CODEC_RE = /\/(?:pl|vid)\/(avc1|av01|hvc1|hev1|h264|hevc|vp09|vp9|mp4a|aac|mp3|opus|ac-3|ec-3)\//i;
 
   function videoIdOf(url) {
-    return VIDEO_ID_RE.exec(url)?.[1] ?? null;
+    return VIDEO_ID_RE.exec(url ?? "")?.[1] ?? VID_PATH_ID_RE.exec(url ?? "")?.[1] ?? null;
   }
 
   function renditionInfo(url) {
@@ -249,7 +254,12 @@
     if (event.source !== window) return;
     const d = event.data;
     if (!d || d.__tweax !== true || d.kind !== "variants-reply") return;
-    pendingVariants.get(d.nonce)?.({ media: d.media ?? null, sid: d.sid ?? null });
+    pendingVariants.get(d.nonce)?.({
+      media: d.media ?? null,
+      sid: d.sid ?? null,
+      author: d.author ?? null,
+      created: d.created ?? null,
+    });
     pendingVariants.delete(d.nonce);
   });
 
@@ -264,6 +274,20 @@
   function variantsFor(statusId) {
     if (!statusId) return Promise.resolve(null);
     return queryVariants({ statusId });
+  }
+
+  /** The tweet a CDN media file belongs to: the MAIN world indexes entities
+   * by their twimg media ids, so a mounted player (or a fiber scan) can name
+   * its tweet without any status link in the DOM. */
+  function mediaForMediaId(mediaId) {
+    if (!mediaId) return Promise.resolve(null);
+    return queryVariants({ mediaId });
+  }
+
+  /** The same lookup for photos, keyed by the /media/<id> segment. */
+  function mediaForPhotoKey(photoKey) {
+    if (!photoKey) return Promise.resolve(null);
+    return queryVariants({ photoKey });
   }
 
   function queryVariants(query) {
@@ -302,29 +326,56 @@
     }
   }
 
+  /** Video CDN ids named by the scope's media thumbnails — the thumb and the
+   * variant urls share one id space, so a trimmed payload's tweet stays
+   * resolvable against the playlist ledger. */
+  function thumbVideoIds(scope) {
+    const out = [];
+    for (const img of scope?.querySelectorAll('[data-testid="tweetPhoto"] img, [data-testid="videoPlayer"] img') ?? []) {
+      const id = THUMB_ID_RE.exec(img.getAttribute("src") ?? "")?.[1];
+      if (id && !out.includes(id)) out.push(id);
+    }
+    return out;
+  }
+
   /** Fallback when the API map missed: the tweet's own <img> media. */
   function domPhotos(article) {
+    return domPhotoEntries(article).map((e) => e.url);
+  }
+
+  /** The scope's media photos, each with the status id of the tweet that owns
+   * it (from its box's wrap anchor) — a quoted card's photos carry their own
+   * sid, so they never get named after the outer tweet. */
+  function domPhotoEntries(scope) {
     const out = [];
-    for (const img of article?.querySelectorAll('[data-testid="tweetPhoto"] img') ?? []) {
+    const seen = new Set();
+    for (const img of scope?.querySelectorAll('[data-testid="tweetPhoto"] img') ?? []) {
       const src = img.getAttribute("src") ?? "";
-      if (src.includes("pbs.twimg.com/media/")) out.push(origPhotoUrl(src));
+      if (!src.includes("pbs.twimg.com/media/")) continue;
+      const url = origPhotoUrl(src);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const box = img.closest('[data-testid="tweetPhoto"]');
+      out.push({ url, sid: (box && wrapSidOf(box, scope)?.sid) ?? null });
     }
-    return [...new Set(out)];
+    return out;
   }
 
   // ------------------------------------------------------- filename template
 
   const DEFAULT_PATTERN = "{account}_{tweetId}_{serial}";
 
-  /** Everything the pattern tokens need: the author handle and the tweet's
-   * timestamp come from the article's own DOM, the media id from the file's
-   * CDN url. */
-  function nameCtxFor(article, statusId, serial, url) {
+  /** Everything the pattern tokens need: the author handle and the timestamp
+   * come from the tweet that OWNS the media (its own permalink anchor — for a
+   * quote that is the quoted card's, not the outer tweet's; when the card
+   * renders no anchor, the API map's own record of that tweet answers), the
+   * media id from the file's CDN url. */
+  async function nameCtxFor(article, statusId, serial, url) {
     return {
-      account: authorOf(article),
+      account: await authorForSid(article, statusId),
       tweetId: statusId,
       serial,
-      date: tweetDateOf(article),
+      date: await tweetDateForSid(article, statusId),
       mediaId: mediaIdOf(url),
     };
   }
@@ -361,6 +412,26 @@
     return seg && seg !== "i" ? seg : "x";
   }
 
+  /** The handle of the tweet that owns `sid`: the first path segment of one
+   * of its own permalink anchors. Every tweet renders those (its header
+   * timestamp, and each media box's wrap link), quoted cards included — so
+   * quoted media is named after its real owner. When the sid has no anchor
+   * here, the API map's record of that tweet answers (its GraphQL payload
+   * carries the author); the scope's own header is the last resort. */
+  async function authorForSid(scope, sid) {
+    if (sid && scope) {
+      for (const a of scope.querySelectorAll('a[href*="/status/"]')) {
+        const href = a.getAttribute("href") ?? "";
+        const path = href.startsWith("/") ? href : href.replace(/^(?:https?:)?\/\/[^/]+/i, "");
+        const m = /^\/([^/]+)\/status\/(\d+)/.exec(path);
+        if (m && m[2] === sid && m[1] !== "i") return m[1];
+      }
+      const res = await variantsFor(sid);
+      if (res?.author) return res.author;
+    }
+    return authorOf(scope);
+  }
+
   /** The tweet's own timestamp; a missing/invalid one falls back to "now" —
    * the template still renders, just with the download moment. */
   function tweetDateOf(scope) {
@@ -369,14 +440,31 @@
     return d && !Number.isNaN(d.getTime()) ? d : new Date();
   }
 
-  /** The media file's id on X's CDN (video variants carry a numeric id, photo
-   * urls a /media/<id> segment). */
+  /** The timestamp of the tweet that owns `sid` (the <time> inside one of its
+   * own permalink anchors, else the API map's record), falling back like
+   * tweetDateOf. */
+  async function tweetDateForSid(scope, sid) {
+    if (sid && scope) {
+      for (const a of scope.querySelectorAll('a[href*="/status/"]')) {
+        const href = a.getAttribute("href") ?? "";
+        const path = href.startsWith("/") ? href : href.replace(/^(?:https?:)?\/\/[^/]+/i, "");
+        const m = /^\/([^/]+)\/status\/(\d+)/.exec(path);
+        if (!m || m[2] !== sid) continue;
+        const iso = a.querySelector("time")?.getAttribute("datetime");
+        const d = iso ? new Date(iso) : null;
+        if (d && !Number.isNaN(d.getTime())) return d;
+      }
+      const res = await variantsFor(sid);
+      const d = res?.created ? new Date(res.created) : null;
+      if (d && !Number.isNaN(d.getTime())) return d;
+    }
+    return tweetDateOf(scope);
+  }
+
+  /** The media file's id on X's CDN (video variants carry the id after their
+   * media directory — numeric or alphanumeric — photo urls a /media/<id>). */
   function mediaIdOf(url) {
-    return (
-      /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(url ?? "")?.[1] ??
-      /\/media\/([A-Za-z0-9_-]+)/.exec(url ?? "")?.[1] ??
-      ""
-    );
+    return videoIdOf(url) ?? /\/media\/([A-Za-z0-9_-]+)/.exec(url ?? "")?.[1] ?? "";
   }
 
   // ---------------------------------------------------------------- click
@@ -411,8 +499,15 @@
     }
 
     // Photos: single image downloads directly; multi-image posts zip all
-    // images into one archive (the container overlays grab singles).
-    const photoUrls = media?.photos?.length ? media.photos.map(origPhotoUrl) : domPhotos(article);
+    // images into one archive (the container overlays grab singles). The DOM
+    // fallback attributes each photo to the tweet its box belongs to, so a
+    // quoted card's photos are neither mixed in nor named after this tweet.
+    const photoEntries = media?.photos?.length
+      ? media.photos.map((u) => ({ url: origPhotoUrl(u), sid: statusId }))
+      : domPhotoEntries(article);
+    const ownEntries = photoEntries.filter((e) => !e.sid || !statusId || e.sid === statusId);
+    const chosen = ownEntries.length ? ownEntries : photoEntries;
+    const photoUrls = chosen.map((e) => e.url);
     const isMedia = media?.type === "video" || media?.type === "animated_gif";
     if (photoUrls.length && !isMedia) {
       if (!prefs.photo) {
@@ -422,8 +517,12 @@
       if (photoUrls.length > 1) {
         const job = {
           zipUrls: photoUrls,
-          zipNames: photoUrls.map((u, i) => renderPattern(prefs.pattern, nameCtxFor(article, statusId, i + 1, u))),
-          name: renderPattern(prefs.pattern, nameCtxFor(article, statusId, 1, null)),
+          zipNames: await Promise.all(
+            photoUrls.map(async (u, i) =>
+              renderPattern(prefs.pattern, await nameCtxFor(article, chosen[i].sid ?? statusId, i + 1, u))
+            )
+          ),
+          name: renderPattern(prefs.pattern, await nameCtxFor(article, statusId, 1, null)),
         };
         const res = await api.runtime
           .sendMessage({ kind: "tweax:download", job })
@@ -437,8 +536,12 @@
         .sendMessage({
           kind: "tweax:download-photos",
           urls: photoUrls,
-          statusId,
-          names: photoUrls.map((u, i) => renderPattern(prefs.pattern, nameCtxFor(article, statusId, i + 1, u))),
+          statusId: chosen[0].sid ?? statusId,
+          names: await Promise.all(
+            photoUrls.map(async (u, i) =>
+              renderPattern(prefs.pattern, await nameCtxFor(article, chosen[i].sid ?? statusId, i + 1, u))
+            )
+          ),
         })
         .catch((err) => ({ ok: false, error: String(err) }));
       if (res?.ok) {
@@ -498,6 +601,25 @@
       let spec = null;
       if (media?.type === "video" || media?.type === "animated_gif") {
         spec = bestVariantSpec(media);
+        if (!spec) {
+          // The payload carried the entity trimmed (timelines strip quoted
+          // tweets' variants): what this document has seen then decides —
+          // the article's player stamps, the thumbnails' CDN ids, its fiber.
+          const fiber = article ? fiberMedia(article) : new Map();
+          const videoEl = article?.querySelector("video");
+          const stampedId = article ? articleVideoId.get(article) : null;
+          const resId = videoEl?.videoWidth
+            ? idByResolution(collected, videoEl.videoWidth, videoEl.videoHeight)
+            : null;
+          const id =
+            pickFiberId(fiber, collected, stampedId, resId) ||
+            stampedId ||
+            resId ||
+            thumbVideoIds(article).find((tid) => collected.get(tid)?.videos.length || collected.get(tid)?.direct) ||
+            midOverride;
+          spec = id ? (pickFor(collected, id) ?? pickFromFiber(fiber, id)) : null;
+          if (spec && !statusId) statusId = (await mediaForMediaId(id))?.sid ?? statusId;
+        }
       } else {
         const fiber = article ? fiberMedia(article) : new Map();
         const videoEl = article?.querySelector("video");
@@ -512,10 +634,11 @@
           newestVideoId(collected) ||
           midOverride;
         spec = id ? (pickFor(collected, id) ?? pickFromFiber(fiber, id)) : null;
+        if (spec && !statusId) statusId = (await mediaForMediaId(id))?.sid ?? statusId;
       }
     if (spec) {
       spec.gif = media?.type === "animated_gif";
-      if (statusId) spec.name = renderPattern(prefs.pattern, nameCtxFor(article, statusId, 1, spec.url));
+      if (statusId) spec.name = renderPattern(prefs.pattern, await nameCtxFor(article, statusId, 1, spec.url));
     }
     if (spec?.gif && !prefs.gif) {
       flash(btn, "GIF downloads are off");
@@ -558,9 +681,9 @@
       });
   }
 
-  /** Media overlays on multi-media posts: each downloads its own item — a
-   * photo directly, a GIF/video as that position's media entity (the box
-   * holds a <video>, so the two are told apart locally). */
+  /** Media overlays on multi-media posts and quoted cards: each downloads its
+   * own item from the tweet the BOX belongs to — in a quote that is the
+   * quoted tweet, never the one whose action bar hosts the button. */
   document.addEventListener(
     "click",
     async (event) => {
@@ -572,22 +695,131 @@
       overlay.dataset.tweaxBusy = "1";
       try {
         const article = overlay.closest("article");
-        const statusId = overlay.dataset.tweaxSid || statusIdOf(article);
-        const idx = Number(overlay.dataset.tweaxIndex ?? 0);
-        const media = (await variantsFor(statusId))?.media ?? null;
+        const box = overlay.parentElement;
+        const video = box?.querySelector("video") ?? null;
+        // A videoPlayer shell the player has not mounted into yet is still a
+        // video box; so is a photo box holding only a video thumbnail.
+        const isVideoBox =
+          !!video ||
+          !!box?.matches?.('[data-testid="videoPlayer"]') ||
+          !!box?.querySelector('[data-testid="videoPlayer"]') ||
+          /video_thumb\//.test(box?.querySelector("img")?.getAttribute("src") ?? "");
+        const stampedId = video ? videoElMedia.get(video) ?? null : null;
+        const quoted = overlay.dataset.tweaxQuoted === "1";
+        /** The map entry must describe THIS box: a video box needs a video or
+         * GIF entity, a photo box photos — a mismatched candidate is a tweet
+         * whose media merely shares the article with the box. */
+        const fits = (m) =>
+          !!m &&
+          (isVideoBox
+            ? m.type === "video" || m.type === "animated_gif"
+            : !!m.photos?.length || m.type === "photo");
+
+        let statusId = null;
+        let media = null;
+
+        // 1. The box's own binding: its wrap anchor sid, pre-set to the
+        // quoted tweet's id for quoted boxes.
+        statusId = overlay.dataset.tweaxSid || null;
+        media = statusId ? (await variantsFor(statusId))?.media ?? null : null;
+        if (media && !fits(media)) media = null;
+
+        // 2. The mounted player's stamp names its tweet via the twimg id.
+        if (!media && stampedId) {
+          const res = await mediaForMediaId(stampedId);
+          if (res?.media && fits(res.media)) {
+            statusId = res.sid ?? null;
+            media = res.media;
+          }
+        }
+
+        // 3. The box's own React data: a quoted player shell carries its
+        // video_info even when the article's anchors and the map both miss.
+        if (!media) {
+          const fiber = fiberMedia(box ?? article);
+          for (const fid of fiber.keys()) {
+            const res = await mediaForMediaId(fid);
+            if (res?.media && fits(res.media)) {
+              statusId = res.sid ?? statusId;
+              media = res.media;
+              break;
+            }
+          }
+        }
+
+        // 4. The article's status ids kind-matched against the map — for the
+        // host tweet's own boxes only: a quoted box must never fall through
+        // to the host tweet's media, silence beats the wrong download.
+        if (!media && !quoted) {
+          const outerSid = statusIdOf(article);
+          const candidates = statusIdsIn(article).filter((id) => id !== outerSid);
+          candidates.push(outerSid);
+          for (const id of candidates) {
+            const m = (await variantsFor(id))?.media ?? null;
+            if (m && fits(m)) {
+              statusId = id;
+              media = m;
+              break;
+            }
+          }
+        }
 
         // GIF/video item: download the entity at this position, converted to
         // a real .gif when it is one and the GIF toggle is on.
-        if (overlay.parentElement?.querySelector("video")) {
+        if (isVideoBox) {
+          // The thumbnail names the media's CDN id — both the map (including
+          // a payload trimmed to no variants) and this document's playlist
+          // ledger are keyed by it.
+          const thumbId = THUMB_ID_RE.exec(
+            box?.querySelector("img")?.getAttribute("src") ?? ""
+          )?.[1] ?? null;
+          if ((!media || !statusId) && thumbId) {
+            const res = await mediaForMediaId(thumbId);
+            if (res?.media && fits(res.media)) {
+              statusId = res.sid ?? statusId;
+              if (!media) media = res.media;
+            }
+          }
           const items = media?.videos?.length
             ? media.videos
             : media && (media.type === "video" || media.type === "animated_gif")
               ? [media]
               : [];
-          const item = items[idx] ?? null;
-          const spec = item ? bestVariantSpec(item) : null;
-          if (!spec?.url || /\.m3u8(\?|$)/i.test(spec.url)) return;
-          const gif = item.type === "animated_gif";
+          const idx = Number(overlay.dataset.tweaxIndex ?? 0);
+          const item = items[idx] ?? (items.length === 1 ? items[0] : null);
+          let spec = item ? bestVariantSpec(item) : null;
+          const gif = item ? item.type === "animated_gif" : media?.type === "animated_gif";
+          if (!spec && video) {
+            // GIFs and short clips are served as one file: the element's own
+            // source IS the media (an MSE player carries a useless blob: and
+            // falls through to the ledger below).
+            const srcUrl = video.currentSrc || video.src || "";
+            if (/^https?:\/\/video\.twimg\.com\/.+\.(mp4|webm)(\?|#|$)/i.test(srcUrl)) {
+              spec = { url: srcUrl, audioUrl: null };
+              if (!statusId) {
+                statusId =
+                  (await mediaForMediaId(videoIdOf(srcUrl) ?? thumbId))?.sid ?? null;
+              }
+            }
+          }
+          if (!spec) {
+            // Timelines can deliver the quoted entity trimmed, or the box can
+            // be anchor-less: what this document has SEEN then decides — the
+            // playlists its players fetched, the box's own React data.
+            const collected = collectPlaylists();
+            const fiber = fiberMedia(box ?? article);
+            const resId = video?.videoWidth
+              ? idByResolution(collected, video.videoWidth, video.videoHeight)
+              : null;
+            const vid =
+              pickFiberId(fiber, collected, stampedId ?? thumbId, resId) ??
+              stampedId ??
+              thumbId ??
+              resId;
+            spec = vid ? pickFor(collected, vid) ?? pickFromFiber(fiber, vid) : null;
+            if (spec && !statusId) statusId = (await mediaForMediaId(vid))?.sid ?? null;
+          }
+          if (!spec?.url) return;
           if (gif && !prefs.gif) return;
           if (!gif && !prefs.video) return;
           await api.runtime
@@ -595,8 +827,12 @@
               kind: "tweax:download",
               job: {
                 url: spec.url,
+                audioUrl: spec.audioUrl ?? null,
                 gif: gif && prefs.gif,
-                name: renderPattern(prefs.pattern, nameCtxFor(article, statusId, idx + 1, spec.url)),
+                name: renderPattern(
+                  prefs.pattern,
+                  await nameCtxFor(article, statusId, (item ? idx : 0) + 1, spec.url)
+                ),
               },
             })
             .catch(() => {});
@@ -604,16 +840,27 @@
         }
 
         if (!prefs.photo) return;
-        const urls = media?.photos?.length ? media.photos.map(origPhotoUrl) : domPhotos(article);
-        const url = urls[idx] ?? urls[0];
-        if (!url) return;
+        const entries = media?.photos?.length
+          ? media.photos.map((u) => ({ url: origPhotoUrl(u), sid: statusId }))
+          : domPhotoEntries(box ?? article);
+        const idx = Number(overlay.dataset.tweaxIndex ?? 0);
+        const entry = entries[idx] ?? entries[0];
+        if (!entry) return;
+        if (!entry.sid) {
+          entry = { ...entry, sid: (await mediaForPhotoKey(mediaIdOf(entry.url)))?.sid ?? null };
+        }
         await api.runtime
           .sendMessage({
             kind: "tweax:download-photos",
-            urls: [url],
-            statusId,
+            urls: [entry.url],
+            statusId: entry.sid ?? statusId,
             start: idx,
-            names: [renderPattern(prefs.pattern, nameCtxFor(article, statusId, idx + 1, url))],
+            names: [
+              renderPattern(
+                prefs.pattern,
+                await nameCtxFor(article, entry.sid ?? statusId, idx + 1, entry.url)
+              ),
+            ],
           })
           .catch(() => {});
       } catch {
@@ -1261,34 +1508,54 @@
     }, 75_000);
   }
 
-  /** Per-media overlays on multi-media posts only — the main button
-   * downloads everything as one ZIP, the overlays grab single items. X
-   * nests the video player inside a photo box, so a single-media post can
-   * present two containers: they collapse to their outermost element, and
-   * the API map's own item count (photos + video entities) decides anyway,
-   * with the collapsed DOM count as fallback. Quoted media boxes answer to
-   * their own status and are never pruned here. */
+  /** Per-media overlays on multi-media posts and quoted cards — the main
+   * button downloads everything as one ZIP, the overlays grab single items.
+   * X nests the video player inside a photo box, so a single-media post can
+   * present two containers: they collapse to their outermost element.
+   *
+   * Which tweet a box belongs to is decided by POSITION: a tweet's own media
+   * group always precedes its quoted card in the article, and the API map's
+   * entity count for the tweet (photos + videos) is the split point — the
+   * first ownCount boxes are the tweet's own, everything after belongs to the
+   * quoted tweet. Own single media gets no overlay (the action-bar button
+   * serves it); quoted media always gets one — it is the only control that
+   * downloads it, and it must never fall back to the host tweet's media. */
   function syncMediaOverlays(article, media, sid) {
     const all = [...article.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')];
     const boxes = all.filter((box) => !all.some((other) => other !== box && other.contains(box)));
-    const known = media?.photos?.length || media?.videos?.length;
-    const count = known ? (media.photos?.length ?? 0) + (media.videos?.length ?? 0) : boxes.length;
-    for (const box of boxes) {
+    const ownCount = media ? (media.photos?.length ?? 0) + (media.videos?.length ?? 0) : 0;
+    // A quote has exactly one quoted tweet; its status id (when the card
+    // renders a permalink anchor at all) pre-binds the card's boxes to it.
+    const others = statusIdsIn(article).filter((id) => id !== sid);
+    const quotedHint = others.length === 1 ? others[0] : "";
+    boxes.forEach((box, i) => {
       const overlay = box.querySelector(":scope > [data-tweax-overlay]");
-      const wrap = wrapSidOf(box, article);
-      const own = !wrap?.sid || wrap.sid === sid;
-      const kind = box.querySelector("video") ? "media" : "photo";
+      const own = i < ownCount;
+      const buttonCovers = own ? ownCount < 2 : ownCount === 0;
+      const kind =
+        box.matches('[data-testid="videoPlayer"]') || box.querySelector("video, [data-testid='videoPlayer']")
+          ? "media"
+          : "photo";
       const wanted = kind === "photo" ? prefs.photo : prefs.gif || prefs.video;
-      if (!wanted || (count < 2 && own)) {
+      if (!wanted || buttonCovers) {
         if (overlay) removeOverlayEl(overlay);
-        continue;
+        return;
       }
-      if (overlay) continue;
-      createMediaOverlay(box, wrap?.sid ?? sid, wrap?.photoIdx ?? boxes.indexOf(box), boxes.length, kind);
-    }
+      if (overlay) return;
+      const wrap = wrapSidOf(box, article);
+      const group = own ? boxes.slice(0, ownCount) : boxes.slice(ownCount);
+      createMediaOverlay(
+        box,
+        own ? sid : wrap?.sid || quotedHint || "",
+        wrap?.photoIdx ?? group.indexOf(box),
+        group.length,
+        kind,
+        !own
+      );
+    });
   }
 
-  function createMediaOverlay(box, sid, index, total, kind) {
+  function createMediaOverlay(box, sid, index, total, kind, quoted) {
     if (box.querySelector(":scope > [data-tweax-overlay]")) return;
     if (getComputedStyle(box).position === "static") box.style.position = "relative";
     const b = document.createElement("div");
@@ -1296,6 +1563,7 @@
     b.tabIndex = 0;
     b.dataset.tweaxOverlay = "photo";
     b.dataset.tweaxSid = sid ?? "";
+    if (quoted) b.dataset.tweaxQuoted = "1";
     if (index != null) b.dataset.tweaxIndex = String(index);
     const noun = kind === "media" ? "video" : "image";
     b.setAttribute("aria-label", total > 1 ? `Download ${noun} ${index + 1}` : `Download ${noun}`);
@@ -1317,13 +1585,76 @@
       if (revealedGates.has(gate)) continue;
       revealedGates.add(gate);
       gate.click();
+      kickRevealedVideo(gate);
     }
+  }
+
+  /** Nudge one paused video through X's own player (a click keeps the
+   * player's state consistent, a raw play() backs it up) until it actually
+   * plays — a bounded window; a pause after that is the user's own. */
+  function keepKicking(video) {
+    let tries = 0;
+    const tick = () => {
+      if (!video.isConnected || video.ended) return;
+      if (!video.paused) return;
+      video.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, composed: true })
+      );
+      const p = video.play();
+      if (p?.catch) p.catch(() => {});
+      if (++tries < 30) setTimeout(tick, 500);
+    };
+    setTimeout(tick, 300);
+  }
+
+  /** X never autoplays media it just un-gated (and the synthetic reveal
+   * click carries no user activation), so a revealed sensitive video stays
+   * paused until the play button is pressed. Playback is started here: once
+   * the video mounts inside the un-gated box, it is kicked through X's own
+   * player (a click — its state machine stays consistent) with a raw play()
+   * as the backup, retrying while the player mounts or loads. The window
+   * closes the moment the video actually plays — a pause after that is the
+   * user's own and is never fought. */
+  function kickRevealedVideo(gate) {
+    const near = gate.closest('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]') ?? gate.parentElement;
+    const article = gate.closest("article");
+    let tries = 0;
+    const tick = () => {
+      const scope = near?.isConnected ? near : article?.isConnected ? article : null;
+      const video = scope
+        ? [...scope.querySelectorAll("video")].find((v) => v.paused && !v.ended) ?? null
+        : null;
+      if (video) {
+        keepKicking(video);
+        return;
+      }
+      if (++tries < 60) setTimeout(tick, 500);
+    };
+    setTimeout(tick, 300);
+  }
+
+  /** X never autoplays a sensitive video — and when the account's settings
+   * render such media un-gated there is no gate click to piggyback on either.
+   * The tweet a status page was opened for therefore gets the playback kick
+   * directly (the first article is the focal one; replies keep their peace). */
+  const focalKicked = new WeakSet();
+
+  function kickFocalVideo(article) {
+    if (!prefs.reveal) return;
+    if (!/\/status\/\d+$/.test(location.pathname)) return;
+    if (document.querySelector('article[data-testid="tweet"]') !== article) return;
+    const video = article.querySelector("video");
+    if (!video || focalKicked.has(video)) return;
+    if (!(video.paused && !video.ended)) return;
+    focalKicked.add(video);
+    keepKicking(video);
   }
 
   function scan() {
     for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
       inject(article);
       revealSensitive(article);
+      kickFocalVideo(article);
       // The API map knows the real media type (video/gif/photo) — sync the
       // button's icon with it and hide the whole thing when that type is off.
       void variantsFor(statusIdOf(article)).then((res) => {

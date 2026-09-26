@@ -89,7 +89,9 @@ function dedupeKey(spec) {
   if (Array.isArray(spec.zipUrls) && spec.zipUrls.length) {
     return `zip:${spec.name ?? spec.zipUrls.length + ":" + spec.zipUrls[0]}`;
   }
-  const id = /\/(?:amplify_video|ext_tw_video|vid|tweet_video)\/(\d+)\//.exec(spec.url ?? "")?.[1];
+  const id =
+    /\/(?:amplify_video|ext_tw_video|tweet_video)\/([A-Za-z0-9_-]+)/.exec(spec.url ?? "")?.[1] ??
+    /\/vid\/(\d+)\//.exec(spec.url ?? "")?.[1];
   return id ? `xvid:${id}` : `${spec.url}|${spec.audioUrl ?? ""}`;
 }
 
