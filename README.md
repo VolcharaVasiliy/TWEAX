@@ -4,7 +4,7 @@
 
 Download videos with one click — sound included — save GIFs as real `.gif` files, grab photos at their original size, and never fight the mute button again. Everything runs locally in your browser: no servers, no accounts, no tracking.
 
-Works in Chrome and Edge (Manifest V3, Chromium 116+).
+Works in Chrome and Edge (Manifest V3, Chromium 116+) and Firefox (Manifest V3, Firefox 128+).
 
 ## What it looks like
 
@@ -76,6 +76,13 @@ X hides sensitive media behind a blurred "Show" overlay. TWEAX reveals it automa
 
 After updating the files, hit the ↻ **Reload** button on the extension card.
 
+### Firefox
+
+- **Ready-made build (easiest):** grab `tweax-firefox-mv3-<version>-signed.xpi` from the [latest release](https://github.com/VolcharaVasiliy/TWEAX/releases/latest) and open it in Firefox (or drag it into `about:addons`) — the build is signed on AMO and installs permanently.
+- **From source:** the Firefox MV3 port lives in [`firefox-mv3/`](firefox-mv3/README-FIREFOX.md) — see its README for what differs from the Chrome build and how to run it with `web-ext`.
+
+After installing, open `about:addons` → TWEAX → *Permissions* and enable **Access your data for all websites** — Firefox treats MV3 host permissions as opt-in, and X's media CDN needs them for downloads.
+
 ---
 
 ## Usage
@@ -127,7 +134,7 @@ Characters a filesystem won't accept are replaced with `_`.
 | `downloads` | Save finished files to your Downloads folder |
 | `tabs` / `activeTab` / `scripting` | Find media on the page you're viewing and report download progress back to its button |
 | `webRequest` | Observe which media files the page has loaded (read-only; nothing is modified or blocked) |
-| `offscreen` | Run the ffmpeg.wasm muxing pipeline in a hidden page (service workers can't do it) |
+| `offscreen` | Run the ffmpeg.wasm muxing pipeline in a hidden page (Chrome/Edge only — in Firefox the pipeline runs in the background page) |
 | Host access (`<all_urls>`) | Media can be hosted on several CDN domains; the sound tweaks need to attach to the player page |
 
 ---
@@ -147,7 +154,7 @@ offscreen/offscreen.js   The download pipeline: HLS assembly (AES-128 decryption
 ffmpeg/                  Bundled @ffmpeg/ffmpeg + @ffmpeg/core (WebAssembly)
 ```
 
-The download pipeline lives in an offscreen document because an MV3 service worker can't run WebAssembly workers or create blob URLs. HLS playlists are assembled with bounded-concurrency segment fetching, retries, and AES-128 decryption via WebCrypto; X's split `avc1`/`mp4a` streams are muxed with stream-copy ffmpeg.wasm (no re-encode, no quality loss).
+The download pipeline lives in an offscreen document because an MV3 service worker can't run WebAssembly workers or create blob URLs. (The Firefox build has no offscreen API — there the pipeline runs directly in the background page, which is a full DOM page; see [`firefox-mv3/`](firefox-mv3/README-FIREFOX.md).) HLS playlists are assembled with bounded-concurrency segment fetching, retries, and AES-128 decryption via WebCrypto; X's split `avc1`/`mp4a` streams are muxed with stream-copy ffmpeg.wasm (no re-encode, no quality loss).
 
 ---
 

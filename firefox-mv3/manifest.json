@@ -1,0 +1,69 @@
+{
+  "manifest_version": 3,
+  "name": "TWEAX",
+  "version": "1.2.1",
+  "description": "Download videos right in the browser (X HLS video+audio muxed via ffmpeg.wasm) and keep the sound on: auto-unmute + locked volume.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tweax-firefox@volcharavasiliy",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "webRequest",
+    "downloads"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["background/index.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "TWEAX",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content/tweaks-main.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/tweaks-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content/x-button.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
